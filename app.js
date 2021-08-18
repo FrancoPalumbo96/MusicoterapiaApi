@@ -110,6 +110,12 @@ app.get('/allUsersData', (req, res) => {
     res.send(users);
 })
 
+app.post('/reset4', (req, res) => {
+    
+    users = [];
+    res.json({response: "ok"});
+});
+
 
 
 app.listen(process.env.PORT || port, (req, res) =>{

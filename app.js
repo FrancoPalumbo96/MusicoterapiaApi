@@ -1,36 +1,3 @@
-/*class User {
-    constructor(id, name){
-        this._id = id;
-        this._name = name;
-        this._history = [];
-        this._fullUserRecords = {};
-    }
-
-    set newData(record){
-    
-        this._history.push(record);
-
-        const keys = [record.video, record.music];
-        const value = this._fullUserRecords[keys];
-
-        if(value === undefined){
-            this._fullUserRecords[keys] = record.time;        
-        } else {
-
-            this._fullUserRecords[keys] = record.time + value;
-        }
-    }
-}
-
-class Record {
-    constructor(video, music, time){
-        this.video = video;
-        this.music = music;
-        this.time = time;
-    }
-}*/
-
-
 const pool = require('./db')
 const express = require('express');
 const cors = require('cors');

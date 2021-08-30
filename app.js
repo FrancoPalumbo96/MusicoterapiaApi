@@ -28,15 +28,15 @@ app.get('/createUser/:name', async (req, res) => {
         const values = [userId, userName];
 
         await pool.query(text, values)
+
+        res.send({
+            user: userName,
+            id: userId
+        });
     } catch (err){
         console.error(err.message);
         res.sendStatus(400);
     }
-    
-    res.send({
-        user: userName,
-        id: userId
-    });
 });
 
 

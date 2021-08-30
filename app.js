@@ -1,124 +1,179 @@
-class User {
-    constructor(id, name){
-        this._id = id;
-        this._name = name;
-        this._history = [];
-        this._fullUserRecords = {};
-    }
-
-    set newData(record){
-    
-        this._history.push(record);
-
-        const keys = [record.video, record.music];
-        const value = this._fullUserRecords[keys];
-
-        if(value == undefined){
-            this._fullUserRecords[keys] = record.time;        
-        } else {
-
-            this._fullUserRecords[keys] = record.time + value;
-        }
-    }
-}
-
-class Record {
-    constructor(video, music, time){
-        this.video = video;
-        this.music = music;
-        this.time = time;
-    }
-}
-
-
-
-
+const pool = require('./db')
 const express = require('express');
 const cors = require('cors');
-const port = 3000;
+const port = process.env.PG_PORT /*|| 3000*/;
 const app = express();
 app.use(express.json());
 app.use(cors());
 
 
-let users = [];
-
-//TODO calls from unity
-
+//TODO check that is not taken
 const idGenerator = () => {
-    return (Date.now().toString(36) + Math.random().toString(36).substr(2, 5)).toUpperCase();
+//    return (Date.now().toString(36) + Math.random().toString(36).substr(2, 5)).toUpperCase();
+    return Math.floor(100000 + Math.random() * 900000);
 }
 
 
-app.get('/createUser/:name', (req, res) => {
+app.get('/createUser/:name', async (req, res) => {
     const userName = req.params.name;
-    if(userName == undefined){
+    if(userName === undefined){
         res.send(400);
         return;
     }
 
     const userId = idGenerator();
-    let user = new User(userId, userName);
-    users.push(user);
-    
-    res.send({
-        user: userName,
-        id: userId
-    });
+
+    try {
+        const text = 'INSERT INTO users (user_id, name) VALUES($1, $2)';
+        const values = [userId, userName];
+
+        await pool.query(text, values)
+
+        res.send({
+            user: userName,
+            id: userId
+        });
+    } catch (err){
+        console.error(err.message);
+        res.sendStatus(400);
+    }
 });
 
-app.post('/updateUserData', (req, res) =>{
-    const userId = req.body.id;
-    const data = req.body.data;
 
-    const user = users.find(x => x._id == userId);
+app.post('/updateUserData', async (req, res) =>{
+    try {
+        const userId = req.body.id;
+        const data = req.body.data;
 
-    if(user == undefined || data == undefined || data.video == undefined || data.music == undefined || data.time == undefined){
-        res.sendStatus(404);
-        return;
+        if(data === undefined || data.video === undefined || data.music === undefined || data.time === undefined){
+            res.sendStatus(404);
+            return;
+        }
+
+        //https://github.com/brianc/node-postgres/issues/1269
+        let text = 'INSERT INTO full_user_records (video, music, playtime) VALUES($1, $2, $3) RETURNING record_id';
+        let values = [data.video, data.music, data.time];
+
+        const {rows} = await pool.query(text, values)
+        const recordId = rows[0].record_id;
+
+        text = 'INSERT INTO users_records (user_id, record_id) VALUES($1, $2) ';
+        values = [userId, recordId];
+
+        await pool.query(text, values)
+
+        res.json({response: "ok"});
+    } catch (err){
+        console.error(err.message);
+        res.sendStatus(400);
     }
 
-
-    user.newData = new Record(data.video, data.music, data.time);
-    res.json({response: "ok"});
 });
 
 
-app.get('/userData/:id', (req, res) => {
+app.get('/userData/:id', async (req, res) => {
     const userId = req.params.id;
 
-    if(userId == undefined){
-        res.send(400);
-        return;
+    try{
+        let text = 'SELECT full_user_records.video, full_user_records.music, full_user_records.playtime ' +
+            'FROM full_user_records ' +
+            'INNER JOIN users_records ON full_user_records.record_id = users_records.record_id ' +
+            'INNER JOIN users ON users_records.user_id = users.user_id ' +
+            'WHERE users.user_id = ' + userId + '';
+
+        const {rows} = await pool.query(text)
+
+        res.send(rows);
+    } catch (err){
+        console.error(err.message);
+        res.sendStatus(400);
     }
-
-    const user = users.find(x => x._id == userId);
-
-    if(user == undefined){
-        res.sendStatus(404);
-        return;
-    }
-
-    let data = {
-        "history": user._history,
-        "record": user._fullUserRecords
-    };
-    res.send(data);
 });
 
-app.get('/allUsersData', (req, res) => {
-    res.send(users);
-})
+app.get('/allUsersData', async (req, res) => {
+    try{
+        let text = 'SELECT users.name, users.user_id, full_user_records.music, full_user_records.video, full_user_records.playtime ' +
+            'FROM full_user_records ' +
+            'INNER JOIN users_records ON full_user_records.record_id = users_records.record_id ' +
+            'INNER JOIN users ON users_records.user_id = users.user_id ';
 
-app.post('/reset4', (req, res) => {
-    
-    users = [];
-    res.json({response: "ok"});
+        const {rows} = await pool.query(text);
+
+        let rowsGroupByUser = []
+
+        rows.forEach(r => {
+            const rowId = r.user_id;
+            const rowName = r.name;
+            const user = rowsGroupByUser.find(x => x.user_id === rowId);
+            const record = {
+                "video": r.video,
+                "music": r.music,
+                "time": r.playtime
+            }
+            if (user !== undefined){
+                user.records.push(record)
+            } else {
+                rowsGroupByUser.push({
+                    "user_id": rowId,
+                    "name": rowName,
+                    "records": [
+                        record
+                    ]
+                })
+            }
+        })
+
+
+        res.send(rowsGroupByUser);
+    } catch (err){
+        console.error(err.message);
+        res.sendStatus(400);
+    }
+});
+
+app.get('/allUsers', async (req, res) => {
+    try{
+        const text = 'SELECT user_id, name ' +
+            'FROM users ';
+        const {rows} = await pool.query(text);
+        res.send(rows);
+    } catch (err){
+        console.log(err.message);
+        res.sendStatus(400);
+    }
+});
+
+app.post('/deleteRecords', async (req, res) => {
+    try {
+        let text = 'DELETE FROM full_user_records';
+        await pool.query(text)
+        text = 'DELETE FROM users_records';
+        await pool.query(text)
+        res.sendStatus(200);
+    } catch (err){
+        console.error(err.message);
+        res.sendStatus(400);
+    }
+});
+
+app.post('/reset4', async (req, res) => {
+    try {
+        let text = 'DELETE FROM full_user_records';
+        await pool.query(text);
+        text = 'DELETE FROM users_records';
+        await pool.query(text);
+        text = 'DELETE FROM users';
+        await pool.query(text);
+        res.sendStatus(200);
+    } catch (err){
+        console.error(err.message);
+        res.sendStatus(400);
+    }
 });
 
 
 
-app.listen(process.env.PORT || port, (req, res) =>{
+app.listen(process.env.PORT || port, () =>{
    console.log('Express API is running at port ' + port);
 });
 
